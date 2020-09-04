@@ -1,0 +1,1007 @@
+model "Molinette_timetable"
+options noimplicit
+uses "mmxprs", "mmsvg"
+
+  ! uses "mminsight" ! uncomment this line for an Xpress Insight model
+
+    declarations
+    TURNO = {"pome","notte"}
+    PIANO = {"piano terra", "terzo piano"}
+    ROL = {"CTO", "EMO", "ECO"}
+    NWEEKS = 18
+    NGIORNI = 7
+    WEEK = 0..NWEEKS
+    GIORNO = 1..NGIORNI
+    DOC : set of string
+
+    work: array(DOC, TURNO, PIANO, WEEK, GIORNO) of mpvar
+    repe: array(DOC, ROL, WEEK, GIORNO) of mpvar
+
+    ! GRUPPI DI DOTTORI DIVISI PER ANZIANITA E ALTRO
+    VECCHI0 = {"USM","GIU","GRI","RIC"}
+    VECCHI2 = {"MIL","CAR","PED","GOL","DAM"}
+    VECCHI3 = {"FAV","GIO","GAR","CAS","ANS","PEN","DAS"}
+    VECCHI5 = {"BEN","JOR","MOT","CIA","DEL","CHE","FRE","MUS","IMA","AND","ALU","GRO","SCA","OME","MON","CON" }
+    VECCHI6 = {"BUD","FER","GIR","TOS"}
+
+    OVER60 = {"GRI","USM","MIL","RIC","CAR","PED","GOL","GIU"}
+    REPARTO = {"USM","GRI","CHE","FRE","TOS","MIL"}
+    EF = {"ANS","FER","GOL","CAS","BUD","GIU"}
+    EMODINAMISTI={"CON", "MON", "OME", "SCA", "PEN", "DAS", "DAM"}
+
+    REPE_INFRA={"IMA","AND","ALU","GRO","MUS","GAR","GIO","FAV","DEL","CIA","MOT","JOR","BEN","FRE","CHE"}
+    A_POME1={"ANS","BEN","CAR","CAS","CHE","CIA","CON","DAM","DAS","GAR","MON","OME","PEN","TOS"}
+    A_POME2={"BUD","FER","DEL","GOL","IMA","MOT","MUS","RIC", "SCA"}
+    A_NOTTE1={"AND","CIA","CON","FER","GRO","IMA","JOR","MON","MOT","PEN","TOS"}
+    A_NOTTE2={"CHE"}
+    A_REPE={"FRE","GIR","GRO","MUS","CHE"}
+
+    ! MEDIE PER VIOLAZIONE NUM INFRA PER GRUPPI
+    media0 = 0
+    media2 = 4
+    media3 = 8
+    media5 = 10
+    media6 = 12
+
+
+    ! PESI DA APPLICARE NELLA FUNZIONE OBIETTIVO
+    PESO_GRUPPI_ANZIANITA=500
+    PESO_N_WEEKEND=100
+    PESO_REPE_CONSECUTIVE=80
+    PESO_INFRA_MAX1=50
+    PESO_PREFERENZE=60
+    PESO_EMO_3P=80
+    PESO_USM_GRI_GIU=100
+
+    ! VETTORI VARIABILI VIOLAZIONE DA MINIMIZZARE IN FUNZIONE OBIETTIVO
+    violazione_numero_festivi_sup: array(DOC) of mpvar
+    violazione_numero_festivi_inf: array(DOC) of mpvar
+    violazione_repe_max3_ruolo:array(DOC,ROL,WEEK) of mpvar
+    violazione_desiderata: array (DOC, WEEK, GIORNO, TURNO) of mpvar
+    violazione_weekend_consecutivi: array(DOC,WEEK) of mpvar  !messo
+    violazione_weekend_consecutivi_ECO:array(DOC,ROL, WEEK)of mpvar
+    violazione_infra_max1:array(DOC,WEEK)of mpvar
+    violazione_infra_media_anzianita_sup:array(DOC)of mpvar  !messo
+    violazione_infra_media_anzianita_inf:array(DOC)of mpvar  !messo
+    violazione_repe_infra_consecutivi:array(DOC,ROL,WEEK) of mpvar
+    violazione_repe_notte:array(DOC,WEEK, GIORNO) of mpvar
+    violazione_medie_repe_inf: array(DOC) of mpvar
+    violazione_medie_repe_sup: array(DOC) of mpvar
+    differenza_pome_notte: array(DOC) of mpvar
+    differenza_notte_pome: array(DOC) of mpvar
+    avanzi_ECO: array(DOC) of mpvar
+
+    avanzi_work0: array(VECCHI0, TURNO) of mpvar
+    avanzi_work3: array(VECCHI3, TURNO) of mpvar
+    avanzi_work5: array(VECCHI5, TURNO) of mpvar
+    avanzi_work6: array(VECCHI6, TURNO) of mpvar
+    avanzi_work2: array(VECCHI2, TURNO) of mpvar
+
+    doc, turno, piano, ruolo: string
+    week, giorno, valore: integer
+    dott: string
+    sett,day,val: integer
+
+
+    ! VARIABILI FUNZIONE OBIETTIVO
+    y1:mpvar
+    y2:mpvar
+    y3:mpvar
+    y4:mpvar
+    y5:mpvar
+    end-declarations
+
+setparam("XPRS_MAXTIME", -50);
+setparam("XPRS_MIPRELSTOP", 0.0);
+
+    initializations from 'doc_dati.dat'
+    DOC
+    end-initializations
+
+    fopen("FERIE FINALI.dat",F_INPUT)
+    repeat
+    readln(dott,sett,day,val)
+        if (val=1)then
+            sum(p in PIANO, t in TURNO)work(dott,t,p,sett,day) +sum(r in ROL)repe(dott,r,sett,day)= (1 - val)
+        if (day>=2)then
+            sum(p in PIANO) work(dott,"notte",p,sett,day-1) = 1-val
+        end-if
+        if (sett>=2)then
+        if (day=1)then
+            sum(p in PIANO) work(dott,"notte",p,sett-1,7) = 1-val
+        end-if
+        end-if
+        end-if
+    until getparam("nbread") < 2
+    fclose(F_INPUT)
+
+
+    !TURNI WORK IN INPUT SETTIMANA 0 E PONTI
+    fopen("work_input2.dat",F_INPUT)
+    repeat
+    readln(doc,turno, piano, week, giorno,valore)
+        work(doc,turno, piano, week, giorno) = valore
+    until getparam("nbread") < 2
+    fclose(F_INPUT)
+
+    ! TURNI REPE IN INPUT SETTIMANA 0 E PONTI
+    fopen("repe_input2.dat",F_INPUT)
+    repeat
+    readln(doc,ruolo,week,giorno, valore)
+        repe(doc,ruolo, week, giorno) = valore
+    until getparam("nbread") < 2
+    fclose(F_INPUT)
+
+    !desiderata
+    fopen("desiderata.dat",F_INPUT)
+    repeat
+    readln(doc,sett, giorno, turno)
+        if (turno="N")then
+            sum(p in PIANO) work(doc,"notte", p, sett, giorno)+sum( r in ROL) repe(doc,r,sett,giorno) = violazione_desiderata(doc, sett, giorno, "notte")
+        end-if
+        if (turno = "P")then
+            sum(p in PIANO) work(doc,"pome", p, sett, giorno) = violazione_desiderata(doc, sett, giorno, "pome")
+        end-if
+        if(turno="G") then
+            sum(p in PIANO, t in TURNO)work(doc, t, p, sett, giorno) +sum( r in ROL) repe(doc,r,sett,giorno) = sum(t in TURNO)violazione_desiderata(doc, sett, giorno, t)
+        end-if
+    until getparam("nbread") < 2
+    fclose(F_INPUT)
+
+
+ ! ------------ Fine dichiarazioni ------------
+
+ ! INIZIO VINCOLI
+ ! VICOLI SULLE VARIABILI BINARIE
+ ! Fisso work e repe a essere binari
+    forall(d in DOC, t in TURNO, p in PIANO, w in WEEK, g in GIORNO) do
+    work(d,t,p,w,g) is_binary
+    end-do
+
+    forall(d in DOC, r in ROL, w in WEEK, g in GIORNO) do
+    repe(d,r,w,g) is_binary
+    end-do
+
+
+ ! In un dato giorno di una settimana un medico non puo lavorare su due piani diversi e non può lavorare il pome-notte consecutivamente
+ ! inoltre non puo fare sia repe che turni normali (tranne nel caso di ECO da scacchiera)
+    forall(d in DOC, w in WEEK, g in GIORNO) do
+        if(w<>11) then
+            sum(t in TURNO, p in PIANO) work(d,t,p,w,g) + repe(d,"CTO",w,g) + repe(d,"EMO",w,g) <= 1
+        end-if
+    end-do
+
+  ! ogni giorno devo avere un solo dottore per ogni piano per ogni turno normale
+    forall(t in TURNO, p in PIANO, w in WEEK, g in GIORNO) do
+        sum(d in DOC) work(d,t,p,w,g) = 1
+    end-do
+
+! devo avere sempre qualcuno in repe
+    forall(w in WEEK, g in GIORNO, r in ROL) do
+        sum(d in DOC) repe(d,r,w,g) = 1
+    end-do
+
+ ! devo avere ogni giorno del weekend un CTO, un ECO, un EMO che siano differenti, altrimenti potrei avere per es. 2 EMO e 1 CTO
+ ! in caso rilassare il vincolo e mettere un >= altrimenti non da soluzione
+!!! LI TOLGO?
+    forall(w in WEEK, g in GIORNO) do
+        sum(d in DOC) repe(d,"ECO", w, g) = 1
+    end-do
+
+    forall(w in WEEK, g in GIORNO) do
+        sum(d in DOC) repe(d,"EMO", w, g) = 1
+    end-do
+
+    forall(w in WEEK, g in GIORNO) do
+        sum(d in DOC) repe(d,"CTO", w, g) = 1
+    end-do
+
+
+! in settimana CTO E ECO sono la stessa persona
+! Mar-Mer-Gio
+    forall(d in DOC, w in WEEK, g in 2..4) do
+        if(w<>11) then
+            repe(d,"CTO",w,g) = repe(d,"ECO", w,g)
+        end-if
+    end-do
+    !
+    forall(d in DOC, w in WEEK) do
+        if(w<>4) then
+            repe(d,"CTO",w,1) = repe(d,"ECO", w,1)
+        end-if
+    end-do
+
+
+! vincolo non è rispettato nelle settimane 3 e 11
+    forall(d in DOC, w in WEEK, g in GIORNO) do
+        if(w=3) then
+            if (g>=1 and g<=2) then
+                repe(d,"CTO",w,g) = repe(d,"ECO", w,g)
+            end-if
+        end-if
+    end-do
+
+    forall(d in DOC, w in WEEK, g in GIORNO) do
+        if(w=11) then
+            if (g>=1 and g<=2) then
+                repe(d,"CTO",w,g) = repe(d,"ECO", w,g)
+            end-if
+        end-if
+    end-do
+
+! ven sab e domenica una determinata reperibilità è fatta dallo stesso medico
+forall(d in DOC,r in ROL, w in WEEK, g in GIORNO) do
+if (g>=5 and g<=6 and w<>3)then
+    repe(d,r, w,g)=repe(d,r,w,g+1)
+    end-if
+end-do
+
+
+
+!INSERIMENTO SCACCHIERA DEL WEEKEND PER LE WORK
+!turno E
+! weekend dellaterza settimana non rispetta la scacchiera quindi lo escludo
+    forall(w in WEEK, d in DOC, p in PIANO) do
+        if(w<>3 and w<>11) then
+            work(d,"pome","piano terra",w,5)=work(d,"notte","piano terra",w,6)
+        end-if
+    end-do
+
+    !turno A
+    forall(w in WEEK, d in DOC, p in PIANO) do
+        if(w<>3 and w<>11) then
+            work(d,"notte","piano terra",w,5)=work(d,"pome","piano terra",w,7)
+        end-if
+    end-do
+
+    !turno B
+        forall(w in WEEK, d in DOC, p in PIANO) do
+        if(w<>3 and w<>11) then
+            work(d,"notte","terzo piano",w,5)=work(d,"pome","terzo piano",w,7)
+        end-if
+    end-do
+
+    !turno C
+        forall(w in WEEK, d in DOC, p in PIANO) do
+        if(w<>3 and w<>11) then
+            work(d,"pome","piano terra",w,6)=work(d,"notte","piano terra",w,7)
+        end-if
+    end-do
+
+    !turno D
+    forall(w in WEEK, d in DOC, p in PIANO) do
+        if(w<>3 and w<>11) then
+            work(d,"pome","terzo piano",w,6)=work(d,"notte","terzo piano",w,7)
+        end-if
+    end-do
+
+! ECO fa anche il turno del venerdi pomeriggio primo piano e sabato notte terzo piano
+
+    forall(d in DOC, w in WEEK) do
+        if(w<>3 and w<>11) then
+            work(d, "pome", "terzo piano", w, 5) = repe(d, "ECO", w, 5)
+        end-if
+    end-do
+
+forall(d in DOC, w in WEEK) do
+if(w<>3 and w<>11) then
+  work(d, "notte", "terzo piano", w, 6) = repe(d, "ECO", w, 6)
+    end-if
+end-do
+
+
+
+! ASSEGNAZIONE DEI RUOLI PER LE REPE AI DOTTORI X NEGAZIONE (quale ruolo non possono ricoprire)
+! RUOLI CHE NON POSSONO ESSERE RICOPERTI DA SIA IN INFRA CHE WEEKEND
+forall(w in WEEK, g in GIORNO) do
+  repe("CON", "CTO", w, g) +
+  + repe("MON", "CTO", w, g) +
+  + repe("OME", "CTO", w, g) +
+  + repe("SCA", "CTO", w, g) +
+  + repe("PEN", "CTO", w, g) +
+  + repe("DAS", "CTO", w, g) +
+  + repe("DAM", "CTO", w, g) = 0
+end-do
+
+forall(w in WEEK, g in GIORNO) do
+  repe("CON", "ECO", w, g) +
+  + repe("MON", "ECO", w, g) +
+  + repe("OME", "ECO", w, g) +
+  + repe("SCA", "ECO", w, g) +
+  + repe("PEN", "ECO", w, g) +
+  + repe("DAS", "ECO", w, g) +
+  + repe("DAM", "ECO", w, g) = 0
+end-do
+
+forall(w in WEEK, g in 5..7) do
+  repe("GRO", "EMO", w, g) +
+  + repe("ALU", "EMO", w, g) +
+  + repe("GIR", "EMO", w, g) +
+  + repe("GIO", "EMO", w, g) +
+  + repe("FAV", "EMO", w, g) +
+  + repe("FRE", "EMO", w, g) +
+  + repe("CHE", "EMO", w, g) +
+  + repe("MUS", "EMO", w, g) = 0
+end-do
+
+! ECCEZIONE PER CHE CHE FA CTO SOLO NELLA WEEK 3
+forall(w in WEEK, g in 5..7) do
+    if (w<>3) then
+        repe("CHE", "CTO", w, g) = 0
+    end-if
+end-do
+
+! ASSEGNAZIONE RUOLI REPE WEEKEND
+forall(w in WEEK, g in 5..7) do
+    repe("GRO", "CTO", w, g) +
+    + repe("ALU", "CTO", w, g) +
+    + repe("GIR", "CTO", w, g) +
+    + repe("FAV", "CTO", w, g) +
+    + repe("GIR", "CTO", w, g) +
+    + repe("FRE", "CTO", w, g) +
+    + repe("MUS", "CTO", w, g) = 0
+end-do
+
+forall(w in WEEK, g in 5..7) do
+    repe("DEL", "EMO", w, g) +
+    + repe("CIA", "EMO", w, g) +
+    + repe("MOT", "EMO", w, g) +
+    + repe("JOR", "EMO", w, g) +
+    + repe("BEN", "EMO", w, g) +
+    + repe("AND", "EMO", w, g) +
+    + repe("IMA", "EMO", w, g) +
+    + repe("GAR", "EMO", w, g) = 0
+end-do
+
+forall(w in WEEK, g in 5..7) do
+    repe("PED", "ECO", w, g) +
+    + repe("RIC", "ECO", w, g) +
+    + repe("CAR", "ECO", w, g) +
+    + repe("PED", "EMO", w, g) +
+    + repe("RIC", "EMO", w, g) +
+    + repe("CAR", "EMO", w, g) = 0
+end-do
+
+forall(w in WEEK, g in 5..7) do
+    sum(t in TURNO, p in PIANO)work("PED",t,p,w,g) = 0
+end-do
+
+forall(w in WEEK, g in 5..7) do
+    sum(r in ROL)(repe("TOS",r,w, g)+
+     + repe("BUD",r,w, g) +
+     + repe("FER",r,w, g) +
+     + repe("ANS",r,w, g) +
+     + repe("CAS",r,w, g) +
+     + repe("GOL",r,w, g) +
+     + repe("MIL",r,w, g) +
+     + repe("USM",r,w, g) +
+     + repe("GIU",r,w, g) +
+     + repe("GRI",r,w, g)) = 0
+end-do
+
+! ASSEGNAZIONE RUOLI REPE INFRA
+! NON EMODINAMISTI
+forall(w in WEEK, g in 1..4) do
+    repe("USM", "EMO", w, g) +
+    + repe("GRI", "EMO", w, g) +
+    + repe("CHE", "EMO", w, g) +
+    + repe("FRE", "EMO", w, g) +
+    + repe("TOS", "EMO", w, g) +
+    + repe("MIL", "EMO", w, g) +
+    + repe("FER", "EMO", w, g) +
+    + repe("GOL", "EMO", w, g) +
+    + repe("CAS", "EMO", w, g) +
+    + repe("BUD", "EMO", w, g) +
+    + repe("GIU", "EMO", w, g) +
+    + repe("MUS", "EMO", w, g) +
+    + repe("GAR", "EMO", w, g) +
+    + repe("JOR", "EMO", w, g) +
+    + repe("FAV", "EMO", w, g) +
+    + repe("GIO", "EMO", w, g) +
+    + repe("ALU", "EMO", w, g) +
+    + repe("GRO", "EMO", w, g) +
+    + repe("AND", "EMO", w, g) +
+    + repe("IMA", "EMO", w, g) +
+    + repe("BEN", "EMO", w, g) +
+    + repe("GIR", "EMO", w, g) +
+    + repe("CIA", "EMO", w, g) +
+    + repe("DEL", "EMO", w, g) +
+    + repe("PED", "EMO", w, g) +
+    + repe("RIC", "EMO", w, g) +
+    + repe("CAR", "EMO", w, g) +
+    + repe("MOT", "EMO", w, g) = 0
+end-do
+
+! NON CTO ED ECO
+forall(w in WEEK, g in 1..4, r in ROL) do
+    if(r <> "EMO") then
+        repe("CON", r, w, g) +
+        + repe("MON", r, w, g) +
+        + repe("OME", r, w, g) +
+        + repe("SCA", r, w, g) +
+        + repe("PEN", r, w, g) +
+        + repe("DAS", r, w, g) +
+        + repe("DAM", r, w, g) = 0
+    end-if
+end-do
+
+! RIC PED CAR FANNO SOLO CTO IN INFRA
+forall(w in WEEK, g in 1..4, r in ROL) do
+    if(r <> "CTO") then
+        repe("PED", r, w, g)+ repe("RIC", r, w, g)+ repe("CAR", r, w, g) = 0
+    end-if
+end-do
+
+!   GIR non può fare repe eco la settimana
+    forall(w in WEEK)do
+            sum(r in ROL, g in 1..4) repe("GIR", r,w,g)=0
+    end-do
+
+!   DOTTORI CHE NON FANNO REPE INFRA
+forall(w in WEEK, g in 1..4, r in ROL) do
+    repe("FER", r, w, g) +
+    + repe("USM", r, w, g) +
+    + repe("GIU", r, w, g) +
+    + repe("ANS", r, w, g) +
+    + repe("TOS", r, w, g) +
+    + repe("GRI", r, w, g) +
+    + repe("BUD", r, w, g) +
+    + repe("MIL", r, w, g) +
+    + repe("CAS", r, w, g) +
+    + repe("GOL", r, w, g) = 0
+end-do
+
+
+
+
+
+!   Avanzi turni precedenti infrasettimanali per GIUGNO
+forall(d in A_POME1)do
+    sum(g in 1..5, p in PIANO, w in 1..4)work(d,"pome", p, w,g)>=1
+   end-do
+
+forall(d in A_POME2)do
+    sum(g in 1..5, p in PIANO, w in 1..4)work(d,"pome", p, w,g)>=2
+    end-do
+
+forall(d in A_NOTTE1)do
+   sum(g in 1..5, p in PIANO, w in 1..4)work(d,"notte", p, w,g)>=1
+   end-do
+
+forall(d in A_NOTTE2)do
+    sum(g in 1..5, p in PIANO, w in 1..4)work(d,"notte", p, w,g)>=2
+    end-do
+
+forall(d in A_REPE)do
+   sum(g in 1..5, r in ROL, w in 1..4)repe(d,r, w,g)>=1
+   end-do
+
+!   vincolo del riposo di 24h dopo turno di 12h (supportati dal vincolo che impedisce il lavoro in due turni consecutivi, pome-notte)
+
+!   CASO SETTIMANA NORMALE
+!   se lavoro la notte del giorno g-1 non posso lavorare in nessun turno del giorno successivo
+    forall(d in DOC,t in TURNO, w in WEEK, g in GIORNO) do
+        if (g>=2) then
+            sum(p in PIANO) work(d, t, p, w, g) <= (1 - (sum(p in PIANO) work(d, "notte", p, w, g-1)))
+        end-if
+    end-do
+
+!   se lavoro il pome del giono g-1 non posso lavorare il pome del giorno successivo g
+    forall(d in DOC, w in WEEK, g in GIORNO) do
+        if (g>=2) then
+            sum(p in PIANO) work(d, "pome", p, w, g) <= (1 - (sum(p in PIANO) work(d, "pome", p, w, g-1)))
+        end-if
+    end-do
+
+!   CASO DOMENICA-LUNEDI
+!   se lavoro il pome della domenica non posso lavorare il pome del lunedi
+forall(d in DOC, w in WEEK) do
+    if (w>=2)then
+        sum(p in PIANO) work(d,"pome", p,w,1) <= (1 - (sum(p in PIANO) work(d,"pome", p,w-1,7)))
+    end-if
+end-do
+
+!   se faccio la notte della domenica non posso fare nessun turno del lunedi ANCHE REPE
+forall(d in DOC, w in WEEK, t in TURNO) do
+    if (w >= 2) then
+        sum(p in PIANO) (work(d, t, p, w, 1)) <= (1 - (sum(p in PIANO) work(d, "notte", p, w-1, 7)))
+    end-if
+end-do
+
+!   IN INFRA SE UN DOTTORE FA LA NOTTE IL GIORNO DOPO NON PUO FARE REPE
+!   CASO DOMENICA-LUNEDI
+forall(d in DOC, w in WEEK) do
+    if (w >= 2)then
+        sum (r in ROL) repe(d, r,w,1) - 1 <= (1 - (sum(p in PIANO) work(d, "notte", p, w-1, 7))) + violazione_repe_notte(d, w-1, 7)
+    end-if
+end-do
+
+!   CASO MAR-MER-GIO
+forall(d in DOC, w in WEEK, g in GIORNO) do
+    if (g in 2..4 and w<>0) then
+        sum (r in ROL) repe(d, r,w,g) - 1 <= (1 - (sum(p in PIANO) work(d, "notte", p, w, g-1))) + violazione_repe_notte(d, w, g-1)
+    end-if
+end-do
+
+
+!   Vincoli sui gruppi in grigio
+! primo gruppo
+    forall(w in WEEK, g in GIORNO)do
+        sum(p in PIANO)(work("USM","notte", p,w, g)+work("GRI","notte", p,w, g) +
+        + work("CHE","notte", p,w, g) + work("FRE","notte", p,w, g) +
+        + work("TOS","notte", p,w, g) + work("MIL","notte", p,w, g)) <= 5
+    end-do
+
+!secondo gruppo
+    forall(w in WEEK, g in GIORNO)do
+        sum(p in PIANO)(work("DAM","notte", p,w, g) +
+        + work("PEN","notte", p,w, g) + work("SCA","notte", p,w, g) +
+        + work("CON","notte", p,w, g) + work("OME","notte", p,w, g) +
+        + work("MON","notte", p,w, g) + work("DAS","notte", p,w, g)) <= 6
+    end-do
+
+! terzo gruppo
+forall(w in WEEK, g in GIORNO)do
+    sum(p in PIANO)(work("ANS","notte", p,w, g) + work("FER","notte", p,w, g) +
+    + work("GOL","notte", p,w, g) + work("GIR","notte", p,w, g) +
+    + work("CAS","notte", p,w, g) + work("BUD","notte", p,w, g) +
+    + work("GIU","notte", p,w, g)) <= 6
+end-do
+
+! quarto gruppo
+forall(w in WEEK, g in GIORNO)do
+    sum(p in PIANO)(work("MUS","notte", p,w, g) +
+    + work("GAR","notte", p,w, g) + work("JOR","notte", p,w, g) +
+    + work("FAV","notte", p,w, g) + work("GIR","notte", p,w, g) +
+    + work("ALU","notte", p,w, g) + work("GRO","notte", p,w, g) +
+    + work("AND","notte", p,w, g) + work("IMA","notte", p,w, g) +
+    + work("BEN","notte", p,w, g) + work("CIA","notte", p,w, g) +
+    + work("MON","notte", p,w, g) + work("DEL","notte", p,w, g)) <= 12
+end-do
+
+
+!   VINCOLI UBICAZIONE sia per WEEKEND che INFRA
+!   ALLEGERITO PER TURNI IN INPUT
+
+forall(w in WEEK, d in GIORNO)do
+    sum(t in TURNO) work("FRE", t, "piano terra",w, d) = 0
+    sum(t in TURNO) work("TOS", t, "piano terra",w, d) = 0
+    sum(t in TURNO) work("MIL", t, "piano terra",w, d) = 0
+    sum(t in TURNO) work("GIU", t, "piano terra",w, d) = 0
+
+    sum(t in TURNO) work("USM", t, "terzo piano",w, d) = 0
+    sum(t in TURNO) work("GRI", t, "terzo piano",w, d) = 0
+    sum(t in TURNO) work("CHE", t, "terzo piano",w, d) = 0
+end-do
+
+!   EMODINAMISTI NON POSSONO FARE LA NOTTE AL PRIMO PIANO 100%
+    forall(w in WEEK, g in GIORNO, d in EMODINAMISTI)do
+        if(w<>3) then
+            work(d, "notte", "piano terra",w, g) = 0
+        end-if
+    end-do
+
+
+!   DOTTORI CHE NON FANNO WORK MA ALCUNI HANNO AVANZI
+    sum(t in TURNO, p in PIANO, d in GIORNO, w in WEEK) work("RIC", t, p,w, d) <= 2
+    sum(t in TURNO, p in PIANO, d in GIORNO, w in WEEK) work("PED", t, p,w, d) = 0
+    sum(t in TURNO, p in PIANO, d in GIORNO, w in WEEK) work("CAR", t, p,w, d) <= 2
+
+!FAV E GIO FANNO STESSI WEEKEND
+    forall(w in WEEK) do
+        if(w<>3) then
+            sum(t in TURNO, p in PIANO, g in 5..7)(work("FAV",t,p,w,g)) = sum(t in TURNO, p in PIANO, g in 5..7)(work("GIO",t,p,w,g))
+        end-if
+    end-do
+
+!   OVER 60 FANNO SOLO POME --> NON FANNO NOTTI
+    forall(w in 1..18, g in 1..4, d in OVER60) do
+        sum(p in PIANO)work(d,"notte",p,w,g) = 0
+    end-do
+
+!   NON METTERE PERSONE DELLO STESSO GRUPPO NELLA STESSA NOTTE
+    forall(w in WEEK, g in GIORNO) do
+        sum(p in PIANO, d in EMODINAMISTI)work(d,"notte",p,w,g) <= 1
+    end-do
+
+    forall(w in WEEK, g in GIORNO) do
+        sum(p in PIANO, d in EF)work(d,"notte",p,w,g) <= 1
+    end-do
+
+    forall(w in WEEK, g in GIORNO) do
+        sum(p in PIANO, d in REPARTO)work(d,"notte",p,w,g) <= 1
+    end-do
+
+
+! VINCOLI PER COSTRUZIONE DELLA F.O. --> VINCOLI VIOLABILI
+
+! DIFFERENZA POMERIGGI-NOTTI PER CIASCUN DOTTORE BILANCIATA (MENO DI 3)
+    forall(d in DOC) do
+        sum(w in 1..18, p in PIANO, g in GIORNO)work(d,"notte",p,w,g) - sum(w in 1..18, p in PIANO, g in GIORNO)work(d,"pome",p,w,g) <= differenza_notte_pome(d)
+        sum(w in 1..18, p in PIANO, g in GIORNO)work(d,"pome",p,w,g) - sum(w in 1..18, p in PIANO, g in GIORNO)work(d,"notte",p,w,g) <= differenza_pome_notte(d)
+    end-do
+
+
+!   UN DOTTORE DOVREBBE FARE SOLTANTO UN TURNO INFRA A SETTIMANA
+    forall(d in DOC, w in WEEK) do
+        sum(g in 1..4, p in PIANO, t in TURNO)work(d, t,p,w,g) <= 1+violazione_infra_max1(d,w)
+    end-do
+
+
+! NUMERO FESTIVI: considero weekend e festivi insieme 18 weekend + san giovanni e ferragosto
+
+    forall(d in DOC) do
+    !settimana 0
+        sum(p in PIANO)work(d,"pome",p,0,6)+
+        +work(d,"pome","piano terra",0,7)+
+        +repe(d,"CTO",0,7)+
+    !resto
+        +sum(p in PIANO, t in TURNO, w in 1..17) work(d,t,p,w,7) +
+        +sum(r in ROL, w in 1..17) repe(d,r,w,7)+
+        +sum(w in 1..2)work(d,"notte", "piano terra",w,6)+
+        +sum(w in 4..10)work(d,"notte", "piano terra",w,6)+
+        +sum(w in 12..17)work(d,"notte", "piano terra",w,6) +
+        +sum(p in PIANO, t in TURNO) work(d,t,p,4,1)+
+        +sum(t in TURNO, p in PIANO)work(d,t,p,11,6) +
+        +work(d,"pome", "piano terra", 11,5)+
+        +repe(d, "CTO", 11,3) <= 5 + violazione_numero_festivi_sup(d)
+    end-do
+
+    forall(d in DOC) do
+    !settimana 0
+        sum(p in PIANO)work(d,"pome",p,0,6)+
+        +work(d,"pome","piano terra",0,7)+
+        +repe(d,"CTO",0,7)+
+    !resto
+        +sum(p in PIANO, t in TURNO, w in 1..17) work(d,t,p,w,7) +
+        +sum(r in ROL, w in 1..17) repe(d,r,w,7)+
+        +sum(w in 1..2)work(d,"notte", "piano terra",w,6)+
+        +sum(w in 4..10)work(d,"notte", "piano terra",w,6)+
+        +sum(w in 12..17)work(d,"notte", "piano terra",w,6) +
+        +sum(p in PIANO, t in TURNO) work(d,t,p,4,1)+
+        +sum(t in TURNO, p in PIANO)work(d,t,p,11,6) +
+        +work(d,"pome", "piano terra", 11,5)+
+        +repe(d, "CTO", 11,3) >= 4 - violazione_numero_festivi_inf(d)
+    end-do
+
+    forall(d in DOC) do
+    !   settimana 0
+        sum(p in PIANO)work(d,"pome",p,0,6)+
+        +work(d,"pome","piano terra",0,7)+
+        +repe(d,"CTO",0,7)+
+    !   resto
+        +sum(p in PIANO, t in TURNO, w in 1..17) work(d,t,p,w,7) +
+        +sum(r in ROL, w in 1..17) repe(d,r,w,7)+
+        +sum(w in 1..2)work(d,"notte", "piano terra",w,6)+
+        +sum(w in 4..10)work(d,"notte", "piano terra",w,6)+
+        +sum(w in 12..17)work(d,"notte", "piano terra",w,6) +
+        +sum(p in PIANO, t in TURNO) work(d,t,p,4,1)+
+        +sum(t in TURNO, p in PIANO)work(d,t,p,11,6) +
+        +work(d,"pome", "piano terra", 11,5)+
+        +repe(d, "CTO", 11,3) >= 4 - violazione_numero_festivi_sup(d)
+    end-do
+
+
+! ALLINEAMENTO REPERIBILITA TOTALI ALLA MEDIA
+    forall(d in REPE_INFRA) do
+        sum(w in 1..10, g in 1..4)repe(d,"CTO",w,g) +
+        +sum(w in 12..17, g in 1..4)repe(d,"CTO",w,g) +
+        +sum(g in 1..2)repe(d,"CTO",11,g)+
+        +repe(d,"CTO",11,1) >= 4 - violazione_medie_repe_inf(d) + avanzi_ECO(d)
+    end-do
+
+
+
+! REPRIBILITA VICINI ALLE MEDIE TOTALI - EMODINAMISTI SONO PIU POCHI - MEDIA PIU ALTA
+! PRENDO SOLO UNA TRA ECO E CTO TANTO IN INFRA E' FATTA DALLO STESSO MEDICO
+    forall(d in REPE_INFRA) do
+        sum(w in 1..10, g in 1..4)repe(d,"CTO",w,g) +
+        +sum(w in 12..17, g in 1..4)repe(d,"CTO",w,g) +
+        +sum(g in 1..2)repe(d,"CTO",11,g) +
+        +repe(d,"CTO",11,1) <= 5 + violazione_medie_repe_sup(d) + avanzi_ECO(d)
+    end-do
+
+
+    forall (d in REPE_INFRA) do
+        sum(w in 1..4, g in 1..4)repe(d,"CTO", w, g) >= avanzi_ECO(d)
+    end-do
+
+    forall(d in EMODINAMISTI) do
+        sum(w in 1..10, g in 1..4)repe(d,"EMO",w,g) +
+        +sum(w in 12..17, g in 1..4)repe(d,"EMO",w,g) +
+        +sum(g in 1..2)repe(d,"EMO",11,g)+
+        +repe(d,"EMO",11,1) >= 9
+    end-do
+
+    forall(d in EMODINAMISTI) do
+        sum(w in 1..10, g in 1..4)repe(d,"EMO",w,g) +
+        +sum(w in 12..17, g in 1..4)repe(d,"EMO",w,g) +
+        +sum(g in 1..2)repe(d,"EMO",11,g)+
+        +repe(d,"EMO",11,1) <= 10
+    end-do
+
+ avanzi_ECO("FAV") = 1
+    avanzi_ECO("FRE") = 1
+    avanzi_ECO("GIO") = 1
+    avanzi_ECO("GRO") = 1
+    avanzi_ECO("MUS") = 1
+    avanzi_ECO("CHE") = 1
+
+    avanzi_work0("RIC","pome") = 2
+    avanzi_work2("GOL","pome") = 2
+    avanzi_work3("CAS", "pome") = 1
+    avanzi_work3("DAS", "pome") = 1
+    avanzi_work3("ANS", "pome") = 1
+    avanzi_work5("OME", "pome") = 1
+    avanzi_work5("MON", "pome") = 1
+    avanzi_work5("MON", "notte") = 1
+    avanzi_work5("CON", "notte") = 1
+    avanzi_work5("CON", "pome") = 1
+    avanzi_work5("IMA", "pome") = 2
+    avanzi_work5("IMA", "notte") = 1
+    avanzi_work5("BEN", "pome") = 1
+    avanzi_work5("AND", "notte") = 1
+    avanzi_work5("JOR", "notte") = 1
+    avanzi_work5("MOT", "pome") = 2
+    avanzi_work5("MOT", "notte") = 1
+    avanzi_work5("CIA", "pome") = 1
+    avanzi_work5("CIA", "notte") = 1
+    avanzi_work5("GRO", "notte") = 1
+    avanzi_work5("DEL", "pome") = 2
+    avanzi_work5("MUS", "pome") = 2
+    avanzi_work5("CHE", "pome") = 1
+    avanzi_work5("CHE", "notte") = 2
+    avanzi_work6("FER", "notte") = 1
+    avanzi_work6("FER", "pome") = 2
+    avanzi_work5("FRE", "notte") = 1
+    avanzi_work6("BUD", "pome") = 2
+    avanzi_work6("TOS", "pome") = 1
+    avanzi_work6("TOS", "pome") = 1
+    avanzi_work5("MUS", "pome") = 2
+    avanzi_work3("PEN", "pome") = 1
+    avanzi_work3("PEN", "notte") = 1
+    avanzi_work2("CAR", "pome") = 1
+    avanzi_work5("SCA", "pome") = 2
+    avanzi_work2("DAM", "pome") = 1
+    avanzi_work3("GAR", "pome") = 1
+
+ !ogni medico deve stare vicino alla media richiesta in termini di infrasettimanali totali
+ ! LO SFORAMENTO PUO ESSERE DOVUTO AL FATTO CHE UN DOTTORE AVESSE DEGLI AVANZI DA FARE, AVANZI INIZIALIZZATI INDICATI DA EXCEL
+ !vincolo limite inferiore
+
+forall(d in VECCHI0) do
+    sum(p in PIANO, t in TURNO,w in 1..18, g in 1..4)work(d,t,p,w,g)+
+    +sum(w in WEEK)work(d,"pome","terzo piano",w,5) <= (media0+ violazione_infra_media_anzianita_sup(d)) + sum(t in TURNO)avanzi_work0(d,t)
+end-do
+
+forall(d in VECCHI2) do
+    sum(p in PIANO, t in TURNO,w in 1..18, g in 1..4)work(d,t,p,w,g) +
+    +sum(w in WEEK)work(d,"pome","terzo piano",w,5) <= (media2+ violazione_infra_media_anzianita_sup(d)) + sum(t in TURNO)avanzi_work2(d,t)
+end-do
+
+forall(d in VECCHI3) do
+    sum(p in PIANO, t in TURNO,w in 1..18, g in 1..4)work(d,t,p,w,g) +
+    +sum(w in WEEK)work(d,"pome","terzo piano",w,5) <= (media3+ violazione_infra_media_anzianita_sup(d)) + sum(t in TURNO)avanzi_work3(d,t)
+end-do
+
+forall(d in VECCHI5) do
+    sum(p in PIANO, t in TURNO,w in 1..18, g in 1..4)work(d,t,p,w,g) +
+    +sum(w in WEEK)work(d,"pome","terzo piano",w,5) <= (media5+ violazione_infra_media_anzianita_sup(d)) + sum(t in TURNO)avanzi_work5(d,t)
+end-do
+
+forall(d in VECCHI6) do
+    sum(p in PIANO, t in TURNO,w in 1..18, g in 1..4)work(d,t,p,w,g) +
+    +sum(w in WEEK)work(d,"pome","terzo piano",w,5) <= (media6+ violazione_infra_media_anzianita_sup(d)) + sum(t in TURNO)avanzi_work6(d,t)
+end-do
+
+
+ !vincolo limite inferiore
+
+    forall(d in VECCHI2) do
+        sum(p in PIANO, t in TURNO,w in 1..18, g in 1..4)work(d,t,p,w,g) +
+        +sum(w in WEEK)work(d,"pome","terzo piano",w,5)>=(media2- violazione_infra_media_anzianita_inf(d))+ sum(t in TURNO)avanzi_work2(d,t)
+    end-do
+
+    forall(d in VECCHI3) do
+        sum(p in PIANO, t in TURNO,w in 1..18, g in 1..4)work(d,t,p,w,g) +
+        +sum(w in WEEK)work(d,"pome","terzo piano",w,5)>=(media3- violazione_infra_media_anzianita_inf(d))+ sum(t in TURNO)avanzi_work3(d,t)
+    end-do
+
+    forall(d in VECCHI5) do
+        sum(p in PIANO, t in TURNO,w in 1..18, g in 1..4)work(d,t,p,w,g) +
+        +sum(w in WEEK)work(d,"pome","terzo piano",w,5)>=(media5- violazione_infra_media_anzianita_inf(d))+ sum(t in TURNO)avanzi_work5(d,t)
+    end-do
+
+    forall(d in VECCHI6) do
+        sum(p in PIANO, t in TURNO,w in 1..18, g in 1..4)work(d,t,p,w,g)+
+        +sum(w in WEEK)work(d,"pome","terzo piano",w,5)>=(media6- violazione_infra_media_anzianita_inf(d))+ sum(t in TURNO)avanzi_work6(d,t)
+    end-do
+
+!   LIMITO VIOLAZIONE SCOSTAMENTO DA MEDIA WORK INFRA
+    forall(d in VECCHI2) do
+        violazione_infra_media_anzianita_sup(d)<=1
+    end-do
+    forall(d in VECCHI3) do
+        violazione_infra_media_anzianita_sup(d)<=1
+    end-do
+    forall(d in VECCHI5) do
+        violazione_infra_media_anzianita_sup(d)<=1
+    end-do
+    forall(d in VECCHI6) do
+        violazione_infra_media_anzianita_sup(d)<=1
+    end-do
+    
+
+! I DOTTORI CHE HANNO AVANZI DEVONO FARE UN NUMERO DI WORK MAGGIORE O UGUALE ALL'AVANZO STABILITO
+    forall(d in VECCHI3, t in TURNO) do
+        sum(p in PIANO, w in 1..4, g in 1..4)work(d,t,p,w,g)>=avanzi_work3(d,t)
+    end-do
+
+    forall(d in VECCHI0, t in TURNO) do
+        sum(p in PIANO, w in 1..4, g in 1..4)work(d,t,p,w,g)>=avanzi_work0(d,t)
+    end-do
+
+    forall(d in VECCHI5, t in TURNO) do
+        sum(p in PIANO, w in 1..4, g in 1..4)work(d,t,p,w,g)>=avanzi_work5(d,t)
+    end-do
+    forall(d in VECCHI6, t in TURNO) do
+        sum(p in PIANO, w in 1..4, g in 1..4)work(d,t,p,w,g)>=avanzi_work6(d,t)
+    end-do
+
+    forall(d in VECCHI0,t  in TURNO) do
+        sum(p in PIANO, w in 1..4, g in 1..4)work(d,t,p,w,g)>=avanzi_work0(d,t)
+    end-do
+
+
+
+
+!VIOLAZIONE WEEKEND CONSECUTIVI A 3 A 3
+! presi 3 weekend successivi violazione se un dottore lavora in piu di un weekend sia work che repe
+! escludo gli ECO perche mi fanno saltare i conti, infatti
+! max 2 caselle work ad 1 --> 3 mai --> 4 violazione
+! max 3 caselle repe --> 4 violazione
+! SENZA CONTARE FESTIVI
+    forall(d in DOC,  w in 0..16, r in ROL)do
+        if (r<>"ECO")then
+            sum(g in 5..7)repe(d,r,w,g)+
+            +(sum(g in 5..7)repe(d,r,w+1,g))+
+            +(sum(g in 5..7)repe(d,r,w+2,g)+
+            +sum(g in 5..7, t in TURNO, p in PIANO)work(d, t, p, w, g))+
+            +(sum(g in 5..7, t in TURNO, p in PIANO)work(d, t, p, w+1, g))+
+            +(sum(g in 5..7, t in TURNO, p in PIANO)work(d, t, p, w+2, g))<=3+violazione_weekend_consecutivi(d,w)
+            end-if
+    end-do
+
+     forall(d in DOC, w in 0..16)
+        sum( p in PIANO, t in TURNO, g in 5..7)work( d, t, p ,w, g) +
+        + sum( p in PIANO, t in TURNO, g in 5..7)work(d, t, p ,w+1, g) +
+        + sum( p in PIANO, t in TURNO, g in 5..7)work(d, t, p ,w+2, g) +
+        + sum(g in 5..7)repe(d, "ECO",w,g)+
+        + sum(g in 5..7) repe(d, "ECO",w+1,g)+
+        + sum(g in 5..7) repe(d, "ECO",w+2,g) <= 5 + violazione_weekend_consecutivi_ECO(d, "ECO", w)
+
+! UN DOTTORE IN LUN-GIO PUO FARE SOLO UN DETERMINATO RUOLO DI REPE UNA SOLA VOLTA
+! SOMMO SUI GIORNI QUINDI STO CONSIDERANNO UNA COLONNA --> SU UNA STESSA COLONNA REPE 1-5 NON CI PUO ESSERE LO STESSO MEDICO
+! VIOLATO A FERRAGOSTO MA ERA DA INPUT
+    forall(d in DOC, w in 1..18, r in ROL) do
+        sum(g in 1..4) repe(d, r,w,g)<=1+violazione_repe_infra_consecutivi(d ,r,w)
+    end-do
+
+
+    !   UN DOTTORE DOVREBBE FARE SOLO AL MAX 3 TURNI REPE DI UN RUOLO IN UNA SETTIMANA
+    forall(d in DOC, r in ROL, w in WEEK) do
+        sum(g in GIORNO)repe(d,r,w,g)<=3+violazione_repe_max3_ruolo(d,r,w)
+    end-do
+
+
+
+    y1=sum(d in DOC, r in ROL, w in WEEK)(violazione_repe_max3_ruolo(d,r,w)+600*violazione_weekend_consecutivi_ECO(d,r,w))
+
+
+    y2=PESO_USM_GRI_GIU*(violazione_infra_media_anzianita_sup("GIU")+
+                        +violazione_infra_media_anzianita_sup("GRI")+
+                        +violazione_infra_media_anzianita_sup("USM"))
+
+    y3=sum(d in DOC, w in WEEK, g in GIORNO, t in TURNO)violazione_desiderata(d,w,g,t)*100+
+                            +1200*sum(d in DOC, w in WEEK, r in ROL)violazione_repe_infra_consecutivi(d ,r,w)+
+                            +1000*sum(d in DOC, w in WEEK, g in GIORNO)violazione_repe_notte(d,w, g)
+
+    y4=300*sum(d in DOC, w in WEEK)(violazione_weekend_consecutivi(d,w) +PESO_INFRA_MAX1*violazione_infra_max1(d,w))
+
+    y5=300*sum(d in DOC)(violazione_medie_repe_inf(d) + 700*violazione_numero_festivi_sup(d)+700*violazione_numero_festivi_inf(d)+
+                        + violazione_medie_repe_sup(d)+
+                        + differenza_notte_pome(d) +
+                        + differenza_pome_notte(d)+
+                        + PESO_GRUPPI_ANZIANITA*violazione_infra_media_anzianita_sup(d)+
+                        + PESO_GRUPPI_ANZIANITA*violazione_infra_media_anzianita_inf(d)+
+                        + 300*(violazione_medie_repe_inf(d)+violazione_medie_repe_sup(d)))
+
+ minimize(y3+y2+y1+y4+y5)
+!mia stampa
+
+
+  forall(w in WEEK) do
+  writeln
+  writeln("--------------------")
+  writeln
+  writeln("Settimana ", w)
+   writeln("       piano terra     terzo piano  ")
+  writeln("      notte     pome     notte     pome     CTO      ECO      EMO")
+  forall(g in GIORNO) do
+        if (g=1)then
+            write("Lun: ")
+            end-if
+         if (g=2)then
+            write("Mar: ")
+            end-if
+         if (g=3)then
+            write("Mer: ")
+            end-if
+        if (g=4)then
+            write("Gio: ")
+            end-if
+        if (g=5)then
+            write("Ven: ")
+            end-if
+        if (g=6)then
+            write("Sab: ")
+            end-if
+        if (g=7)then
+            write("Dom: ")
+            end-if
+      forall(p in PIANO) do
+        forall(t in TURNO) do
+          forall(d in DOC) do
+              if (getsol(work(d,t,p,w,g)) = 1) then
+                write("   "+d+"   ")
+              end-if
+          end-do
+        end-do
+      end-do
+      forall (r in ROL) do
+        forall(d in DOC) do
+             if (getsol(repe(d,r,w,g)) = 1) then
+                write("   "+d+"   ")
+            end-if
+        end-do
+    end-do
+    writeln
+    end-do
+end-do
+
+
+
+forall(d in DOC)do
+    writeln("FESTIVI: "+d+" "+getsol( sum(p in PIANO)work(d,"pome",p,0,6)+
+    +work(d,"pome","piano terra",0,7)+
+    +repe(d,"CTO",0,7)+sum(p in PIANO, t in TURNO, w in 1..17) work(d,t,p,w,7) +
+  +sum(r in ROL, w in 1..17) repe(d,r,w,7)+
+  +sum(w in 1..2)work(d,"notte", "piano terra",w,6)+
+  +sum(w in 4..10)work(d,"notte", "piano terra",w,6)+
+  +sum(w in 12..17)work(d,"notte", "piano terra",w,6) +
+  +sum(p in PIANO, t in TURNO) work(d,t,p,4,1)+
+  +sum(t in TURNO, p in PIANO)work(d,t,p,11,6) +
+  +work(d,"pome", "piano terra", 11,5)+
+  +repe(d, "CTO", 11,3)))
+end-do
+forall( d in DOC, w in WEEK, r in ROL) do
+    if (getsol(violazione_weekend_consecutivi_ECO(d, r, w))>0)then
+         writeln("Consecutivi: "+d+" "+r +" " +w)
+         end-if
+    end-do
+forall(d in DOC)
+    writeln("Notte-pome "+d+" "+getsol(sum( p in PIANO, w in WEEK, g in GIORNO)work(d,"notte",p,w,g))+" - "+getsol(sum( p in PIANO, w in WEEK, g in GIORNO)work(d,"pome",p,w,g)))
+
+
+    forall(d in DOC) do
+    if (getsol(violazione_infra_media_anzianita_sup(d))>0 or getsol(violazione_infra_media_anzianita_inf(d))>0)then
+    writeln("INF: "+d+" " +getsol(violazione_infra_media_anzianita_inf(d)))
+    writeln("SUP: "+d+" " +getsol(violazione_infra_media_anzianita_sup(d)))
+    end-if
+    end-do
+
+    forall(d in DOC) do
+    writeln(d + " pome " +getsol(sum(w in WEEK, p in PIANO,g in 1..4)work(d,"pome",p,w,g)) +" notte "+ d+" "+ getsol(sum(w in WEEK, p in PIANO,g in 1..4)work(d,"notte",p,w,g)))
+    end-do
+end-model
+
